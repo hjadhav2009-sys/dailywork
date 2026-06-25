@@ -1,46 +1,84 @@
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
 import { AlertBanner } from "@/components/ui/AlertBanner";
+import { ButtonLink } from "@/components/ui/ButtonLink";
 import { Card } from "@/components/ui/Card";
-import { PlaceholderPanel } from "@/components/ui/PlaceholderPanel";
 import { requireUser } from "@/lib/auth";
+import { loadCatalogIndex } from "@/lib/catalog/master";
+import { compactNumber, formatDateTime } from "@/lib/format";
 
 export default async function OwnerCatalogSyncPage() {
   await requireUser(["OWNER"]);
+  const index = await loadCatalogIndex();
 
   return (
     <AppShell>
       <PageHeader
         eyebrow="Catalog Sync"
-        title="Catalog sync will be staged here later"
-        description="Phase 1 reserves the route, UI language, and safety expectations for future catalog updates without enabling any scraper code."
-      />
+        title="Phase 3 live sync planning"
+        description="Current phase uses Excel import/export only. Live scraping will be Phase 3."
+        action={{ href: "/owner/catalog", label: "Open catalog" }}
+      >
+        <ButtonLink href="/owner/catalog/export" variant="secondary">
+          Export Master Excel
+        </ButtonLink>
+      </PageHeader>
 
-      <PlaceholderPanel
-        eyebrow="Sync placeholder"
-        title="Future syncs will stay owner-controlled and reviewable."
-        description="When scraping arrives in a later phase, this page will be the checkpoint for safe execution, visibility into changes, and a clean distinction between today’s operational images and the broader catalog master."
-        highlights={[
-          "Catalog sync will update SKU, title, product URL, image URLs, Product Highlights, Additional Details, and the last scraped date in the master Excel-backed workflow.",
-          "Daily warehouse screens will still prefer only current and active SKU images needed for picking and packing.",
-          "Any future scrape flow will require explicit review steps rather than silent background updates."
-        ]}
-        primaryAction={{ href: "/owner/catalog", label: "Back to catalog overview" }}
-        secondaryAction={{ href: "/owner", label: "Return to dashboard" }}
-      />
-
-      <AlertBanner tone="info" title="Planned integration point">
-        {/* TODO(catalog-phase-2): connect the reviewed catalog master import/sync pipeline here once scraping rules, rate limits, and validation UX are finalized. */}
-        This page exists now so later scraper work has a clear, isolated entry point instead of leaking into the stable warehouse workflows.
+      <AlertBanner tone="warning" title="Live scraping will be Phase 3">
+        Current phase uses Excel import/export only. No Meesho scraper button, background job, or image downloader is enabled here.
       </AlertBanner>
 
-      <Card tone="quiet">
-        <h2 className="text-2xl font-semibold text-slate-950">What will not happen in Phase 1</h2>
-        <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
-          <li>No automatic image harvesting</li>
-          <li>No full-catalog background sync jobs</li>
-          <li>No incomplete or disabled scraper code paths hidden behind buttons</li>
-        </ul>
+      <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+        <Card padding="lg">
+          <p className="dw-kicker">Excel actions</p>
+          <h2 className="mt-4 text-2xl font-semibold text-slate-950">Manage the catalog master</h2>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <ButtonLink href="/owner/catalog">Import Master Excel</ButtonLink>
+            <ButtonLink href="/owner/catalog/export" variant="secondary">
+              Export Master Excel
+            </ButtonLink>
+          </div>
+        </Card>
+
+        <Card padding="lg" tone="quiet">
+          <p className="dw-kicker">Current index</p>
+          <h2 className="mt-4 text-2xl font-semibold text-slate-950">
+            {compactNumber(index.summary.productCount)} products indexed
+          </h2>
+          <dl className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl bg-white/78 p-4">
+              <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Image URLs</dt>
+              <dd className="mt-2 text-lg font-black text-slate-950">{compactNumber(index.summary.imageUrlCount)}</dd>
+            </div>
+            <div className="rounded-2xl bg-white/78 p-4">
+              <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Attributes</dt>
+              <dd className="mt-2 text-lg font-black text-slate-950">{compactNumber(index.summary.attributeCount)}</dd>
+            </div>
+            <div className="rounded-2xl bg-white/78 p-4">
+              <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Invalid rows</dt>
+              <dd className="mt-2 text-lg font-black text-slate-950">{compactNumber(index.summary.invalidRowCount)}</dd>
+            </div>
+            <div className="rounded-2xl bg-white/78 p-4">
+              <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Last import</dt>
+              <dd className="mt-2 text-sm font-semibold text-slate-950">{formatDateTime(index.lastImport?.importedAt)}</dd>
+            </div>
+          </dl>
+        </Card>
+      </section>
+
+      <Card padding="lg">
+        <p className="dw-kicker">Phase 3 checklist</p>
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          {[
+            "Owner-reviewed scraping rules",
+            "Rate limits and retry policy",
+            "Change review before master updates"
+          ].map((item) => (
+            <div key={item} className="rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm font-semibold text-slate-800">
+              {item}
+            </div>
+          ))}
+        </div>
       </Card>
     </AppShell>
   );

@@ -18,6 +18,7 @@ prisma/dev.db-journal
 *.pdf
 !tests/fixtures/**/*.txt
 storage/product-images/
+storage/catalog/
 
 # env
 .env
