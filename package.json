@@ -1,0 +1,56 @@
+{
+  "name": "dailywork-pick-pack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "build:prod": "node scripts/build.mjs --schema prisma/schema.postgres.prisma",
+    "start": "node scripts/start.mjs",
+    "start:prod": "node scripts/start.mjs",
+    "check:env": "node scripts/windows/check-env.mjs",
+    "check:production-readiness": "node scripts/check-production-readiness.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run typecheck && npm run lint && npm run test:validators",
+    "test:validators": "tsx tests/validation.test.ts && tsx tests/meesho-parser.test.ts",
+    "db:seed": "prisma db seed",
+    "db:migrate:prod": "prisma migrate deploy --schema prisma/schema.postgres.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@zxing/browser": "^0.2.0",
+    "autoprefixer": "^10.4.0",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "next": "^15.0.0",
+    "pdf-parse": "^2.4.5",
+    "postcss": "^8.4.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.6.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
+    "prisma": "^6.0.0",
+    "tsx": "^4.19.0"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.10"
+    },
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  }
+}
+
