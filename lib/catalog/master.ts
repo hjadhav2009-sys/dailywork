@@ -289,7 +289,7 @@ function emptySummary(): CatalogSummary {
   };
 }
 
-function emptyIndex(sourceFileName = "meesho_catalog_master.xlsx"): CatalogIndex {
+export function emptyCatalogIndex(sourceFileName = "meesho_catalog_master.xlsx"): CatalogIndex {
   return {
     version: 1,
     generatedAt: nowIso(),
@@ -550,7 +550,7 @@ function addHeaderRow<T extends readonly string[]>(worksheet: ExcelJS.Worksheet,
   });
 }
 
-export async function buildCatalogWorkbookBuffer(index: CatalogIndex = emptyIndex()) {
+export async function buildCatalogWorkbookBuffer(index: CatalogIndex = emptyCatalogIndex()) {
   const workbook = new ExcelJS.Workbook();
   const products = workbook.addWorksheet(productSheetName);
   const images = workbook.addWorksheet(imagesSheetName);
@@ -594,29 +594,88 @@ export async function buildCatalogWorkbookBuffer(index: CatalogIndex = emptyInde
   return Buffer.from(output as ArrayBuffer);
 }
 
-export async function saveCatalogMaster(buffer: Buffer, sourceFileName: string) {
-  const index = await parseCatalogWorkbook(buffer, sourceFileName);
-  const normalizedWorkbook = await buildCatalogWorkbookBuffer(index);
+export function summarizeCatalogIndex(index: Pick<CatalogIndex, "products" | "images" | "attributes" | "errors">): CatalogSummary {
+  const productImageUrlCount = index.products.filter((product) => product.mainImageUrl).length;
+
+  return {
+    productCount: index.products.length,
+    productImageUrlCount,
+    imageRowCount: index.images.length,
+    imageUrlCount: productImageUrlCount + index.images.length,
+    attributeCount: index.attributes.length,
+    missingSkuCount: index.errors.filter((error) => error.errorType === "MISSING_SKU").length,
+    extractedSkuCount: index.products.filter((product) => product.skuSource === "title").length,
+    invalidRowCount: index.errors.length
+  };
+}
+
+export function normalizeCatalogIndex(index: CatalogIndex, options: { generatedAt?: string; sourceFileName?: string } = {}): CatalogIndex {
+  const generatedAt = options.generatedAt ?? nowIso();
+  const sourceFileName = options.sourceFileName ?? index.sourceFileName;
+  const products = index.products.map((product, index) => ({
+    ...product,
+    rowNo: index + 2,
+    skuSearch: product.sku.toLowerCase(),
+    titleSearch: product.title.toLowerCase()
+  }));
+  const images = index.images.map((image, index) => ({
+    ...image,
+    rowNo: index + 2,
+    imageNo: image.imageNo || index + 1
+  }));
+  const attributes = index.attributes.map((attribute, index) => ({
+    ...attribute,
+    rowNo: index + 2
+  }));
+  const errors = index.errors.map((error, index) => ({
+    ...error,
+    rowNo: error.rowNo || index + 2
+  }));
+
+  return {
+    ...index,
+    version: 1,
+    generatedAt,
+    sourceFileName,
+    products,
+    images,
+    attributes,
+    errors,
+    summary: summarizeCatalogIndex({ products, images, attributes, errors })
+  };
+}
+
+export async function saveCatalogIndex(index: CatalogIndex, sourceFileName = "meesho_catalog_master.xlsx") {
+  const normalized = normalizeCatalogIndex(index, {
+    sourceFileName,
+    generatedAt: nowIso()
+  });
+  const normalizedWorkbook = await buildCatalogWorkbookBuffer(normalized);
 
   await mkdir(catalogStorageDir, { recursive: true });
   await Promise.all([
     writeFile(catalogMasterPath, normalizedWorkbook),
-    writeFile(catalogIndexPath, JSON.stringify(index, null, 2), "utf8")
+    writeFile(catalogIndexPath, JSON.stringify(normalized, null, 2), "utf8")
   ]);
 
-  return index;
+  return normalized;
+}
+
+export async function saveCatalogMaster(buffer: Buffer, sourceFileName: string) {
+  const index = await parseCatalogWorkbook(buffer, sourceFileName);
+  return saveCatalogIndex(index, sourceFileName);
 }
 
 export async function loadCatalogIndex() {
   if (!existsSync(catalogIndexPath)) {
-    return emptyIndex();
+    return emptyCatalogIndex();
   }
 
   try {
     const index = JSON.parse(await readFile(catalogIndexPath, "utf8")) as CatalogIndex;
-    return index.version === 1 ? index : emptyIndex();
+    return index.version === 1 ? index : emptyCatalogIndex();
   } catch {
-    return emptyIndex();
+    return emptyCatalogIndex();
   }
 }
 

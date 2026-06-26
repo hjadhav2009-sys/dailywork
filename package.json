@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "validate": "npm run typecheck && npm run lint && npm run test:validators",
-    "test:validators": "tsx tests/validation.test.ts && tsx tests/meesho-parser.test.ts && tsx tests/catalog.test.ts",
+    "test:validators": "tsx tests/validation.test.ts && tsx tests/meesho-parser.test.ts && tsx tests/catalog.test.ts && tsx tests/catalog-sync.test.ts",
     "db:seed": "prisma db seed",
     "db:migrate:prod": "prisma migrate deploy --schema prisma/schema.postgres.prisma"
   },
@@ -30,6 +30,7 @@
     "exceljs": "^4.4.0",
     "next": "^15.0.0",
     "pdf-parse": "^2.4.5",
+    "playwright-core": "^1.51.1",
     "postcss": "^8.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -53,4 +54,3 @@
     }
   }
 }
-
