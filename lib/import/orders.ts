@@ -452,7 +452,7 @@ export async function importParsedOrderRows(input: {
     request: input.request
   });
 
-  await markActiveSkusFromOrders(rows, { catalogIndex });
+  await markActiveSkusFromOrders([...plan.created, ...plan.updated], { catalogIndex });
 
   return updatedBatch;
 }

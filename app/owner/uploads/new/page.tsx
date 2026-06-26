@@ -63,14 +63,14 @@ export default async function UploadBatchPage({ searchParams }: UploadPageProps)
           </label>
 
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">Supplier manifest or picklist PDF</span>
+            <span className="text-sm font-medium text-slate-700">Supplier manifest or picklist file</span>
             <input
               name="manifestPdf"
               type="file"
               accept="application/pdf,.pdf,.xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="mt-2 block w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm text-slate-700 file:mr-4 file:rounded-md file:border-0 file:bg-slate-950 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
             />
-            <span className="mt-2 block text-sm text-slate-500">Use Supplier_Manifest_*.pdf, copied manifest CSV, or exported Excel files.</span>
+            <span className="mt-2 block text-sm text-slate-500">PDF, CSV, and .xlsx files are supported.</span>
           </label>
 
           <div className="rounded-md bg-slate-50 p-4 text-sm leading-6 text-slate-600">

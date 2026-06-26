@@ -28,10 +28,16 @@ const statusTone: Record<string, string> = {
   FAILED: "bg-rose-50/90 text-rose-900 ring-rose-200/90"
 };
 
+const statusLabel: Record<string, string> = {
+  MISSING_IMAGE: "Image Missing",
+  MISSING_CATALOG: "Missing Catalog SKU",
+  BROKEN_IMAGE: "Image Missing / Broken"
+};
+
 export function StatusBadge({ value }: { value: string }) {
   return (
     <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ring-1 ${statusTone[value] ?? statusTone.UPLOADED}`}>
-      {titleCase(value)}
+      {statusLabel[value] ?? titleCase(value)}
     </span>
   );
 }

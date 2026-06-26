@@ -1,0 +1,7 @@
+AWB,SKU,Qty,Courier,Sub Order No,Color,Size,Product Description,Payment Type
+QA-AWB-0001,QA-BR-GOLD-01,2,Delhivery,QA-SO-0001,Gold,Free Size,Balaji Bracelet Gold,PREPAID
+QA-AWB-0002,QA-BR-GOLD-01,1,Delhivery,QA-SO-0002,Gold,Free Size,Balaji Bracelet Gold,COD
+QA-AWB-0003,QA-CH-BLUE-03,1,Shadowfax,QA-SO-0003,Blue,18 inch,Blue Chain Product,PREPAID
+QA-AWB-0004,QA-BROKEN-11,1,Xpress Bees,QA-SO-0004,Copper,Free Size,Broken Image Test Product,UNKNOWN
+QA-AWB-0005,QA-NOT-CATALOG,1,Delhivery,QA-SO-0005,Black,Free Size,Missing Catalog Product,COD
+QA-AWB-0001,QA-BR-GOLD-01,2,Delhivery,QA-SO-0001,Gold,Free Size,Duplicate AWB row,PREPAID

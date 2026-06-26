@@ -1,0 +1,41 @@
+{
+  "fileName": "Supplier_Manifest_QA.pdf",
+  "manifestOrders": [
+    {
+      "pageNumber": 2,
+      "sourceType": "MANIFEST_ORDER",
+      "awb": "QA-AWB-0001",
+      "courier": "Delhivery",
+      "sku": "QA-BR-GOLD-01",
+      "qty": 2,
+      "size": "Free Size",
+      "orderNo": "QA-SO-0001",
+      "confidence": 92,
+      "issues": []
+    },
+    {
+      "pageNumber": 3,
+      "sourceType": "MANIFEST_ORDER",
+      "awb": "QA-AWB-0004",
+      "courier": "Xpress Bees",
+      "sku": "QA-BROKEN-11",
+      "qty": 1,
+      "size": "Free Size",
+      "orderNo": "QA-SO-0004",
+      "confidence": 90,
+      "issues": []
+    }
+  ],
+  "picklistSummaryRows": [
+    {
+      "pageNumber": 1,
+      "sourceType": "PICKLIST_SUMMARY",
+      "sku": "QA-BR-GOLD-01",
+      "color": "Gold",
+      "size": "Free Size",
+      "totalQuantity": 3,
+      "confidence": 94,
+      "issues": []
+    }
+  ]
+}

@@ -179,7 +179,19 @@ function issueTone(issueType: string) {
 }
 
 function issueLabel(issueType: string) {
-  return issueType === "LOW_CONFIDENCE" ? "Needs review" : issueType;
+  if (issueType === "LOW_CONFIDENCE") {
+    return "Needs review";
+  }
+
+  if (issueType === "MISSING_CATALOG_SKU") {
+    return "Missing Catalog SKU";
+  }
+
+  if (issueType === "BROKEN_CATALOG_IMAGE_URL") {
+    return "Image Missing / Broken";
+  }
+
+  return issueType;
 }
 
 function imageBadge(mapping: { imageUrl: string; imageHealth: string; cacheStatus?: string | null } | undefined) {
