@@ -20,6 +20,10 @@ prisma/dev.db-journal
 storage/product-images/
 storage/catalog/
 storage/browser/
+android-worker/.gradle/
+android-worker/local.properties
+android-worker/build/
+android-worker/app/build/
 
 # env
 .env
