@@ -92,7 +92,7 @@ export default async function OwnerCatalogPage({ searchParams }: OwnerCatalogPag
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <Card as="form" action={importCatalogMasterAction} padding="lg" encType="multipart/form-data">
+        <Card as="form" action={importCatalogMasterAction} padding="lg">
           <p className="dw-kicker">Master Excel</p>
           <h2 className="mt-4 text-2xl font-semibold text-slate-950">Import catalog file</h2>
           <div className="mt-5 space-y-4">
