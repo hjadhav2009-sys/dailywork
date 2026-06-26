@@ -38,9 +38,10 @@ export default async function PickerSkuDetailPage({ params, searchParams }: Pick
   }
 
   const firstOrder = detail.orders[0];
-  const imageUrl = detail.mapping?.cachedImageUrl ?? null;
-  const groupColor = firstOrder?.color ?? detail.mapping?.color ?? null;
-  const groupSize = firstOrder?.size ?? detail.mapping?.size ?? null;
+  const imageUrl = detail.imageUrl ?? null;
+  const displayTitle = detail.mapping?.productName ?? firstOrder?.productDescription ?? detail.catalog.title ?? "Product not mapped";
+  const groupColor = firstOrder?.color ?? detail.mapping?.color ?? detail.catalog.color ?? null;
+  const groupSize = firstOrder?.size ?? detail.mapping?.size ?? detail.catalog.size ?? null;
   const hiddenColor = query?.color ?? encodePickerDimension(groupColor);
   const hiddenSize = query?.size ?? encodePickerDimension(groupSize);
   const courierEntries = Object.entries(detail.courierCounts);
@@ -56,6 +57,8 @@ export default async function PickerSkuDetailPage({ params, searchParams }: Pick
       >
         <div className="flex flex-wrap gap-2">
           <StatusBadge value={groupStatus} />
+          {detail.catalog.missingCatalog ? <StatusBadge value="MISSING_CATALOG" /> : null}
+          {detail.catalog.brokenImage ? <StatusBadge value="BROKEN_IMAGE" /> : null}
           <Link
             href="/picker?filter=pending"
             className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-berry hover:text-berry"
@@ -90,19 +93,19 @@ export default async function PickerSkuDetailPage({ params, searchParams }: Pick
       <section className="grid gap-5 pb-24 lg:grid-cols-[0.8fr_1.2fr] lg:pb-0">
         <div className="space-y-5">
           <div className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
-            <ProductImage
+              <ProductImage
               src={imageUrl}
-              alt={detail.mapping?.productName ?? sku}
+              alt={displayTitle ?? sku}
               size="lg"
               mappingId={detail.mapping?.id}
               showDebug={user.role === "OWNER"}
               imageHealth={detail.mapping?.imageHealth}
               cacheStatus={detail.mapping?.cacheStatus}
-              originalImageUrl={detail.mapping?.imageUrl}
+              originalImageUrl={detail.mapping?.imageUrl ?? detail.catalog.imageUrl}
             />
             <div className="p-4">
               <h2 className="break-words text-3xl font-black leading-tight text-slate-950">{sku}</h2>
-              <p className="mt-2 text-base leading-6 text-slate-600">{detail.mapping?.productName ?? "Product not mapped"}</p>
+              <p className="mt-2 text-base leading-6 text-slate-600">{displayTitle}</p>
               {!imageUrl && user.role !== "OWNER" ? (
                 <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">Ask owner to prepare image.</p>
               ) : null}
@@ -140,6 +143,34 @@ export default async function PickerSkuDetailPage({ params, searchParams }: Pick
                   </span>
                 ))}
               </div>
+              {detail.catalog.productHighlights.length > 0 || detail.catalog.additionalDetails.length > 0 ? (
+                <div className="mt-4 grid gap-3">
+                  {detail.catalog.productHighlights.length > 0 ? (
+                    <div className="rounded-md bg-slate-50 p-3">
+                      <h3 className="text-sm font-bold text-slate-950">Product Highlights</h3>
+                      <div className="mt-2 grid gap-1 text-sm text-slate-700">
+                        {detail.catalog.productHighlights.slice(0, 6).map((attribute) => (
+                          <p key={`${attribute.attributeName}-${attribute.attributeValue}`}>
+                            <span className="font-semibold">{attribute.attributeName}:</span> {attribute.attributeValue}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {detail.catalog.additionalDetails.length > 0 ? (
+                    <div className="rounded-md bg-slate-50 p-3">
+                      <h3 className="text-sm font-bold text-slate-950">Additional Details</h3>
+                      <div className="mt-2 grid gap-1 text-sm text-slate-700">
+                        {detail.catalog.additionalDetails.slice(0, 8).map((attribute) => (
+                          <p key={`${attribute.attributeName}-${attribute.attributeValue}`}>
+                            <span className="font-semibold">{attribute.attributeName}:</span> {attribute.attributeValue}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -158,6 +189,20 @@ export default async function PickerSkuDetailPage({ params, searchParams }: Pick
               <input type="hidden" name="color" value={hiddenColor} />
               <input type="hidden" name="size" value={hiddenSize} />
               <h3 className="font-semibold text-slate-950">Mark problem</h3>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {["Not Found", "Damaged", "Wrong Product"].map((reason) => (
+                  <button
+                    key={reason}
+                    formAction={markSkuGroupProblemAction}
+                    formNoValidate
+                    name="reason"
+                    value={reason}
+                    className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800"
+                  >
+                    {reason}
+                  </button>
+                ))}
+              </div>
               <label className="mt-3 block">
                 <span className="text-sm font-medium text-slate-700">Reason</span>
                 <input

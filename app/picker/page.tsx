@@ -9,7 +9,7 @@ import { getLatestImportedBatch, getSkuGroups } from "@/lib/data";
 import { encodePickerDimension } from "@/lib/operations/picking";
 import { normalizeWorkQueueFilter } from "@/lib/operations/work-queue";
 import { cacheSkuImageAction } from "@/app/owner/sku-mappings/actions";
-import { markSkuGroupPickedAction } from "./[sku]/actions";
+import { markSkuGroupPickedAction, markSkuGroupProblemAction } from "./[sku]/actions";
 
 type PickerSkuGroupsPageProps = {
   searchParams?: Promise<{
@@ -207,6 +207,11 @@ export default async function PickerSkuGroupsPage({ searchParams }: PickerSkuGro
             const encodedColor = encodePickerDimension(group.color);
             const encodedSize = encodePickerDimension(group.size);
             const canCacheImage = user.role === "OWNER" && group.mapping?.id && group.mapping.imageUrl && group.mapping.cacheStatus !== "CACHED";
+            const displayTitle = group.productName ?? group.catalog?.title ?? (group.mapping?.imageUrl ? "Mapped image, no product name" : "Product name not mapped");
+            const displayColor = group.color ?? group.mapping?.color ?? group.catalog?.color ?? "Color unknown";
+            const displaySize = group.size ?? group.mapping?.size ?? group.catalog?.size ?? "Size unknown";
+            const highlightPreview = group.catalog?.productHighlights.slice(0, 2) ?? [];
+            const detailPreview = group.catalog?.additionalDetails.slice(0, 2) ?? [];
 
             return (
               <article
@@ -216,19 +221,21 @@ export default async function PickerSkuGroupsPage({ searchParams }: PickerSkuGro
                 {compactMode ? null : (
                   <ProductImage
                     src={group.imageUrl}
-                    alt={group.productName ?? group.sku}
+                    alt={displayTitle ?? group.sku}
                     size="lg"
                     mappingId={group.mapping?.id}
                     showDebug={user.role === "OWNER"}
                     imageHealth={group.mapping?.imageHealth}
                     cacheStatus={group.mapping?.cacheStatus}
-                    originalImageUrl={group.mapping?.imageUrl}
+                    originalImageUrl={group.mapping?.imageUrl ?? group.catalog?.imageUrl}
                   />
                 )}
                 <div className="space-y-4 p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge value={group.status} />
                     {group.missingImage ? <StatusBadge value="MISSING_IMAGE" /> : null}
+                    {group.catalog?.missingCatalog ? <StatusBadge value="MISSING_CATALOG" /> : null}
+                    {group.catalog?.brokenImage ? <StatusBadge value="BROKEN_IMAGE" /> : null}
                     {group.mapping?.imageHealth === "BROKEN" ? (
                       <span className="inline-flex rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 ring-1 ring-rose-200">
                         {user.role === "OWNER" ? "Broken image URL" : "Image issue"}
@@ -245,18 +252,36 @@ export default async function PickerSkuGroupsPage({ searchParams }: PickerSkuGro
                     <h2 className="break-words text-2xl font-black leading-tight text-slate-950">{group.sku}</h2>
                     {compactMode ? null : (
                       <p className="mt-1 line-clamp-2 min-h-10 text-base leading-5 text-slate-600">
-                        {group.productName ?? (group.mapping?.imageUrl ? "Mapped image, no product name" : "Product name not mapped")}
+                        {displayTitle}
                       </p>
                     )}
                     <div className="mt-2 flex flex-wrap gap-2">
                       <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-bold text-slate-700">
-                        {group.color ?? group.mapping?.color ?? "Color unknown"}
+                        {displayColor}
                       </span>
                       <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-bold text-slate-700">
-                        {group.size ?? group.mapping?.size ?? "Size unknown"}
+                        {displaySize}
+                      </span>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-bold text-slate-700">
+                        {group.orderCount} AWB{group.orderCount === 1 ? "" : "s"}
                       </span>
                     </div>
                   </div>
+
+                  {!compactMode && (highlightPreview.length > 0 || detailPreview.length > 0) ? (
+                    <div className="grid gap-2 rounded-md bg-slate-50 p-3 text-sm">
+                      {highlightPreview.map((attribute) => (
+                        <p key={`${attribute.attributeName}-${attribute.attributeValue}`} className="line-clamp-1 text-slate-700">
+                          <span className="font-bold text-slate-950">{attribute.attributeName}:</span> {attribute.attributeValue}
+                        </p>
+                      ))}
+                      {detailPreview.map((attribute) => (
+                        <p key={`${attribute.attributeName}-${attribute.attributeValue}`} className="line-clamp-1 text-slate-700">
+                          <span className="font-bold text-slate-950">{attribute.attributeName}:</span> {attribute.attributeValue}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
 
                   <div className="grid grid-cols-[1.1fr_1fr] gap-3">
                     <div className="rounded-md bg-slate-950 p-4 text-white">
@@ -281,7 +306,7 @@ export default async function PickerSkuGroupsPage({ searchParams }: PickerSkuGro
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     <Link href={detailHref} className="inline-flex min-h-12 items-center justify-center rounded-md bg-slate-950 px-3 py-2 text-sm font-bold text-white">
                       Open
                     </Link>
@@ -293,9 +318,17 @@ export default async function PickerSkuGroupsPage({ searchParams }: PickerSkuGro
                         Picked
                       </button>
                     </form>
-                    <Link href={`${detailHref}#problem-actions`} className="inline-flex min-h-12 items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800">
-                      Problem
-                    </Link>
+                    {["Not Found", "Damaged", "Wrong Product"].map((reason) => (
+                      <form key={reason} action={markSkuGroupProblemAction}>
+                        <input type="hidden" name="sku" value={group.sku} />
+                        <input type="hidden" name="color" value={encodedColor} />
+                        <input type="hidden" name="size" value={encodedSize} />
+                        <input type="hidden" name="reason" value={reason} />
+                        <button type="submit" className="min-h-12 w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-xs font-bold text-slate-800">
+                          {reason}
+                        </button>
+                      </form>
+                    ))}
                   </div>
                   {canCacheImage ? (
                     <form action={cacheSkuImageAction}>

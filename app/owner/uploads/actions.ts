@@ -5,7 +5,11 @@ import { redirect } from "next/navigation";
 import type { PaymentType } from "@prisma/client";
 import { recordAuditLog } from "@/lib/audit";
 import { requireAccount, requireUser } from "@/lib/auth";
+import { loadCatalogIndex } from "@/lib/catalog/master";
+import { buildCatalogDetailsMap } from "@/lib/catalog/order-enrichment";
 import { cacheProductCardImage, imageCacheNeedsRefresh } from "@/lib/image-cache";
+import { parseSpreadsheetRows } from "@/lib/import/files";
+import { parseManifestSpreadsheetRows } from "@/lib/import/manifest-excel";
 import { importParsedOrderRows, type ParsedOrderImportRow } from "@/lib/import/orders";
 import {
   buildPreviewImportStats,
@@ -55,8 +59,27 @@ type CacheQueueMapping = {
   cacheCachedAt: Date | null;
 };
 
+const supportedOrderUploadExtensions = [".pdf", ".xlsx", ".csv"];
+
 function isUploadFile(value: FormDataEntryValue | null): value is File {
   return typeof File !== "undefined" && value instanceof File && value.size > 0;
+}
+
+function lowerFileName(file: File) {
+  return file.name.toLowerCase();
+}
+
+function isPdfUpload(file: File) {
+  return lowerFileName(file).endsWith(".pdf");
+}
+
+function isSpreadsheetUpload(file: File) {
+  const name = lowerFileName(file);
+  return name.endsWith(".xlsx") || name.endsWith(".csv");
+}
+
+function isSupportedOrderUpload(file: File) {
+  return supportedOrderUploadExtensions.some((extension) => lowerFileName(file).endsWith(extension));
 }
 
 function hasIssue(row: PreviewRowDraft, issueType: string) {
@@ -184,14 +207,66 @@ function parsedRowsToDrafts(result: MeeshoParseResult): PreviewRowDraft[] {
 }
 
 async function parseUploadedPdf(file: File) {
-  const parsed = uploadBatchSchema.safeParse({ filename: file.name });
-
-  if (!parsed.success) {
+  if (!isPdfUpload(file)) {
     throw new Error("Only PDF files are supported.");
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  return parseMeeshoPdfBuffer(buffer, parsed.data.filename);
+  return parseMeeshoPdfBuffer(buffer, file.name);
+}
+
+async function parseUploadedSpreadsheet(file: File): Promise<{ drafts: PreviewRowDraft[]; diagnostics: MeeshoParserDiagnostics }> {
+  if (!isSpreadsheetUpload(file)) {
+    throw new Error("Upload a CSV or .xlsx file.");
+  }
+
+  const rows = await parseSpreadsheetRows(file);
+  const parsedRows = parseManifestSpreadsheetRows(rows);
+  const drafts = parsedRows.map<PreviewRowDraft>((row) => ({
+    sourceFileName: file.name,
+    sourceType: row.sourceType,
+    pageNumber: row.rowNumber,
+    awb: row.awb,
+    courier: row.courier,
+    sku: row.sku,
+    qty: row.qty,
+    color: row.color,
+    size: row.size,
+    orderNo: row.orderNo,
+    productDescription: row.productDescription,
+    paymentType: row.paymentType,
+    confidence: row.confidence,
+    issues: [...row.issues],
+    rawData: {
+      sourceFileName: file.name,
+      sourceType: row.sourceType,
+      spreadsheetRowNumber: row.rowNumber,
+      row: row.rawData
+    }
+  }));
+
+  return {
+    drafts,
+    diagnostics: {
+      fileName: file.name,
+      detectedType: "UNKNOWN",
+      pageCount: 0,
+      pagesWithText: rows.length,
+      pagesWithoutText: 0,
+      parsedOrders: parsedRows.filter((row) => row.sourceType === "MANIFEST_ORDER").length,
+      parsedLabelOrders: 0,
+      parsedManifestOrders: parsedRows.filter((row) => row.sourceType === "MANIFEST_ORDER").length,
+      parsedSummaryRows: parsedRows.filter((row) => row.sourceType === "PICKLIST_SUMMARY").length,
+      missingAwb: parsedRows.filter((row) => row.issues.some((issue) => issue.issueType === "MISSING_AWB")).length,
+      missingSku: parsedRows.filter((row) => row.issues.some((issue) => issue.issueType === "MISSING_SKU")).length,
+      lowConfidenceRows: 0,
+      duplicateAwbInsideFile: 0,
+      unknownLayoutPages: 0,
+      scannedPdfLikely: false,
+      parserWarnings: rows.length === 0 ? ["Spreadsheet did not contain any readable rows."] : [],
+      pageDiagnostics: []
+    }
+  };
 }
 
 function buildFailedDiagnostic(fileName: string, message: string): MeeshoParserDiagnostics {
@@ -219,6 +294,7 @@ function buildFailedDiagnostic(fileName: string, message: string): MeeshoParserD
 function buildNotes(input: {
   results: MeeshoParseResult[];
   failedDiagnostics?: MeeshoParserDiagnostics[];
+  extraDiagnostics?: MeeshoParserDiagnostics[];
   importSourceType: ImportPreviewSourceType;
   labelOrderRows: number;
   manifestOrderRows: number;
@@ -231,7 +307,11 @@ function buildNotes(input: {
   blockingRows: number;
   failureReason?: string;
 }) {
-  const diagnostics = [...input.results.map((result) => result.diagnostics), ...(input.failedDiagnostics ?? [])];
+  const diagnostics = [
+    ...input.results.map((result) => result.diagnostics),
+    ...(input.extraDiagnostics ?? []),
+    ...(input.failedDiagnostics ?? [])
+  ];
   const stats = diagnostics.reduce(
     (acc, result) => ({
       totalPages: acc.totalPages + result.pageCount,
@@ -609,7 +689,7 @@ export async function createUploadBatchAction(formData: FormData) {
   const request = await getRequestMeta();
   const labelFile = formData.get("labelPdf");
   const manifestFile = formData.get("manifestPdf");
-  const labelFileUploaded = isUploadFile(labelFile);
+  const labelFileUploaded = isUploadFile(labelFile) && isPdfUpload(labelFile);
   const files = [labelFile, manifestFile].filter(isUploadFile);
 
   if (files.length === 0) {
@@ -623,7 +703,7 @@ export async function createUploadBatchAction(formData: FormData) {
   for (const file of files) {
     const parsed = uploadBatchSchema.safeParse({ filename: file.name });
 
-    if (!parsed.success) {
+    if (!parsed.success || !isSupportedOrderUpload(file)) {
       redirect("/owner/uploads/new?error=invalid-file");
     }
   }
@@ -634,20 +714,28 @@ export async function createUploadBatchAction(formData: FormData) {
   try {
     const results: MeeshoParseResult[] = [];
     const failedDiagnostics: MeeshoParserDiagnostics[] = [];
+    const extraDiagnostics: MeeshoParserDiagnostics[] = [];
+    const spreadsheetDrafts: PreviewRowDraft[] = [];
 
     for (const file of files) {
       try {
-        results.push(await parseUploadedPdf(file));
+        if (isPdfUpload(file)) {
+          results.push(await parseUploadedPdf(file));
+        } else {
+          const parsed = await parseUploadedSpreadsheet(file);
+          spreadsheetDrafts.push(...parsed.drafts);
+          extraDiagnostics.push(parsed.diagnostics);
+        }
       } catch (error) {
         failedDiagnostics.push(
-          buildFailedDiagnostic(file.name, error instanceof Error ? error.message : "Unknown PDF parse error.")
+          buildFailedDiagnostic(file.name, error instanceof Error ? error.message : "Unknown file parse error.")
         );
       }
     }
 
     const parseFailureIssues: ParseIssue[] = failedDiagnostics.map((diagnostic) => ({
-      issueType: "PDF_PARSE_FAILED",
-      message: diagnostic.parserWarnings[0] ?? "The PDF parser failed before diagnostics could be collected.",
+      issueType: "FILE_PARSE_FAILED",
+      message: diagnostic.parserWarnings[0] ?? "The uploaded file parser failed before diagnostics could be collected.",
       severity: "ERROR"
     }));
     const combinedIssues = [
@@ -659,7 +747,7 @@ export async function createUploadBatchAction(formData: FormData) {
         picklistSummaryRows: results.flatMap((result) => result.picklistSummaryRows)
       })
     ];
-    const drafts = results.flatMap(parsedRowsToDrafts);
+    const drafts = [...results.flatMap(parsedRowsToDrafts), ...spreadsheetDrafts];
 
     for (const draft of drafts) {
       for (const issue of combinedIssues) {
@@ -676,6 +764,8 @@ export async function createUploadBatchAction(formData: FormData) {
     const skus = Array.from(
       new Set(importSourceDrafts.flatMap((row) => [row.sku, normalizeSkuForMatching(row.sku)].filter((sku): sku is string => Boolean(sku))))
     );
+    const catalogIndex = await loadCatalogIndex();
+    const catalogBySku = buildCatalogDetailsMap(catalogIndex, skus);
     const [existingOrders, mappings] = await Promise.all([
       prisma.order.findMany({
         where: {
@@ -690,11 +780,28 @@ export async function createUploadBatchAction(formData: FormData) {
           sku: { in: skus },
           active: true
         },
-        select: { sku: true }
+        select: { sku: true, imageUrl: true }
       })
     ]);
     const existingAwbs = new Set(existingOrders.map((order) => order.awb));
-    const mappedSkus = new Set(mappings.map((mapping) => normalizeSkuForMatching(mapping.sku)));
+    const catalogSkus = new Set(
+      Array.from(catalogBySku.entries())
+        .filter(([, detail]) => !detail.missingCatalog)
+        .map(([sku]) => sku)
+    );
+    const mappedSkus = new Set([
+      ...mappings
+        .filter((mapping) => Boolean(mapping.imageUrl))
+        .map((mapping) => normalizeSkuForMatching(mapping.sku)),
+      ...Array.from(catalogBySku.entries())
+        .filter(([, detail]) => Boolean(detail.imageUrl) && !detail.brokenImage)
+        .map(([sku]) => sku)
+    ]);
+    const brokenCatalogSkus = new Set(
+      Array.from(catalogBySku.entries())
+        .filter(([, detail]) => detail.brokenImage)
+        .map(([sku]) => sku)
+    );
 
     for (const draft of importSourceDrafts) {
       if (draft.awb && existingAwbs.has(draft.awb)) {
@@ -711,7 +818,29 @@ export async function createUploadBatchAction(formData: FormData) {
       if (draft.sku && !mappedSkus.has(normalizeSkuForMatching(draft.sku))) {
         appendIssue(draft, {
           issueType: "MISSING_IMAGE_MAPPING",
-          message: `No active image mapping found for SKU ${draft.sku}.`,
+          message: `No active image mapping or catalog image URL found for SKU ${draft.sku}.`,
+          severity: "WARNING",
+          pageNumber: draft.pageNumber,
+          awb: draft.awb,
+          sku: draft.sku
+        });
+      }
+
+      if (draft.sku && !catalogSkus.has(normalizeSkuForMatching(draft.sku))) {
+        appendIssue(draft, {
+          issueType: "MISSING_CATALOG_SKU",
+          message: `SKU ${draft.sku} was not found in the Catalog Master Excel.`,
+          severity: "WARNING",
+          pageNumber: draft.pageNumber,
+          awb: draft.awb,
+          sku: draft.sku
+        });
+      }
+
+      if (draft.sku && brokenCatalogSkus.has(normalizeSkuForMatching(draft.sku))) {
+        appendIssue(draft, {
+          issueType: "BROKEN_CATALOG_IMAGE_URL",
+          message: `Catalog image URL for SKU ${draft.sku} is marked broken.`,
           severity: "WARNING",
           pageNumber: draft.pageNumber,
           awb: draft.awb,
@@ -746,6 +875,7 @@ export async function createUploadBatchAction(formData: FormData) {
         notes: buildNotes({
           results,
           failedDiagnostics,
+          extraDiagnostics,
           importSourceType: importReviewStats.importSourceType,
           labelOrderRows: importReviewStats.labelOrderRows,
           manifestOrderRows: importReviewStats.manifestOrderRows,
@@ -859,6 +989,7 @@ export async function createUploadBatchAction(formData: FormData) {
             notes: buildNotes({
               results: [],
               failedDiagnostics,
+              extraDiagnostics: [],
               importSourceType: labelFileUploaded ? "LABEL" : "MANIFEST_ORDER",
               labelOrderRows: 0,
               manifestOrderRows: 0,
@@ -877,7 +1008,7 @@ export async function createUploadBatchAction(formData: FormData) {
         await prisma.importRowIssue.create({
           data: {
             batchId: batch.id,
-            issueType: "PDF_PARSE_FAILED",
+            issueType: "FILE_PARSE_FAILED",
             message,
             rawData: JSON.stringify({ fileNames: files.map((file) => file.name) })
           }

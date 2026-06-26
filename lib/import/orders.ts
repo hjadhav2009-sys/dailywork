@@ -1,5 +1,8 @@
 import type { Account, Order, PaymentType, SkuImageMapping, User } from "@prisma/client";
 import { recordAuditLog } from "@/lib/audit";
+import { markActiveSkusFromOrders } from "@/lib/catalog/active-skus";
+import { loadCatalogIndex } from "@/lib/catalog/master";
+import { buildCatalogDetailsMap } from "@/lib/catalog/order-enrichment";
 import type { RequestMeta } from "@/lib/network";
 import { prisma } from "@/lib/prisma";
 import { normalizeSkuForMatching } from "@/lib/sku";
@@ -25,6 +28,8 @@ export type OrderImportPlan = {
   duplicates: ParsedOrderImportRow[];
   errors: Array<{ row: ParsedOrderImportRow; issueType: string; message: string }>;
   missingImageRows: ParsedOrderImportRow[];
+  missingCatalogRows: ParsedOrderImportRow[];
+  brokenImageRows: ParsedOrderImportRow[];
 };
 
 type ExistingOrder = Pick<Order, "awb" | "courier" | "sku" | "qty" | "color" | "size" | "orderNo" | "productDescription" | "paymentType">;
@@ -87,7 +92,10 @@ function withImportStats(
 export function planOrderImport(
   existingOrders: ExistingOrder[],
   rows: ParsedOrderImportRow[],
-  mappedSkus: Set<string>
+  mappedSkus: Set<string>,
+  catalogSkus: Set<string> = new Set(),
+  brokenImageSkus: Set<string> = new Set(),
+  validateCatalog = false
 ): OrderImportPlan {
   const existingByAwb = new Map(existingOrders.map((order) => [order.awb, order]));
   const seenAwbs = new Set<string>();
@@ -116,6 +124,14 @@ export function planOrderImport(
 
       const existing = existingByAwb.get(awb);
 
+      if (validateCatalog && !catalogSkus.has(sku)) {
+        plan.missingCatalogRows.push(row);
+      }
+
+      if (brokenImageSkus.has(sku)) {
+        plan.brokenImageRows.push(row);
+      }
+
       if (!mappedSkus.has(sku)) {
         plan.missingImageRows.push(row);
       }
@@ -130,7 +146,7 @@ export function planOrderImport(
 
       return plan;
     },
-    { created: [], updated: [], duplicates: [], errors: [], missingImageRows: [] }
+    { created: [], updated: [], duplicates: [], errors: [], missingImageRows: [], missingCatalogRows: [], brokenImageRows: [] }
   );
 }
 
@@ -200,6 +216,8 @@ export async function importParsedOrderRows(input: {
 
   const awbs = input.rows.map((row) => trimValue(row.awb)).filter(Boolean);
   const skus = input.rows.map((row) => trimSku(row.sku)).filter(Boolean);
+  const catalogIndex = await loadCatalogIndex();
+  const catalogBySku = buildCatalogDetailsMap(catalogIndex, skus);
   const [existingOrders, mappings] = await Promise.all([
     prisma.order.findMany({
       where: {
@@ -225,8 +243,37 @@ export async function importParsedOrderRows(input: {
   ]);
 
   const mappingBySku = new Map(mappings.map((mapping) => [normalizeSkuForMatching(mapping.sku), mapping]));
-  const plan = planOrderImport(existingOrders, input.rows, new Set(mappingBySku.keys()));
-  const metadataAutoFillUpdates = buildSkuMetadataAutoFillUpdates(mappings, input.rows);
+  const rows = input.rows.map((row) => {
+    const sku = trimSku(row.sku);
+    const catalog = catalogBySku.get(sku);
+    const mapping = mappingBySku.get(sku);
+
+    return {
+      ...row,
+      sku,
+      productDescription: trimValue(row.productDescription) || catalog?.title || mapping?.productName || null
+    };
+  });
+  const skusWithCatalog = new Set(
+    Array.from(catalogBySku.entries())
+      .filter(([, detail]) => !detail.missingCatalog)
+      .map(([sku]) => sku)
+  );
+  const skusWithUsableImages = new Set([
+    ...Array.from(mappingBySku.entries())
+      .filter(([, mapping]) => Boolean(mapping.imageUrl))
+      .map(([sku]) => sku),
+    ...Array.from(catalogBySku.entries())
+      .filter(([, detail]) => Boolean(detail.imageUrl) && !detail.brokenImage)
+      .map(([sku]) => sku)
+  ]);
+  const brokenImageSkus = new Set(
+    Array.from(catalogBySku.entries())
+      .filter(([, detail]) => detail.brokenImage)
+      .map(([sku]) => sku)
+  );
+  const plan = planOrderImport(existingOrders, rows, skusWithUsableImages, skusWithCatalog, brokenImageSkus, true);
+  const metadataAutoFillUpdates = buildSkuMetadataAutoFillUpdates(mappings, rows);
 
   for (const error of plan.errors) {
     await prisma.importRowIssue.create({
@@ -246,7 +293,31 @@ export async function importParsedOrderRows(input: {
         batchId: batch.id,
         rowNumber: row.rowNumber,
         issueType: "MISSING_IMAGE_MAPPING",
-        message: `No active image mapping found for SKU ${trimSku(row.sku)}.`,
+        message: `No active image mapping or catalog image URL found for SKU ${trimSku(row.sku)}.`,
+        rawData: JSON.stringify(row)
+      }
+    });
+  }
+
+  for (const row of plan.missingCatalogRows) {
+    await prisma.importRowIssue.create({
+      data: {
+        batchId: batch.id,
+        rowNumber: row.rowNumber,
+        issueType: "MISSING_CATALOG_SKU",
+        message: `SKU ${trimSku(row.sku)} was not found in the Catalog Master Excel.`,
+        rawData: JSON.stringify(row)
+      }
+    });
+  }
+
+  for (const row of plan.brokenImageRows) {
+    await prisma.importRowIssue.create({
+      data: {
+        batchId: batch.id,
+        rowNumber: row.rowNumber,
+        issueType: "BROKEN_CATALOG_IMAGE_URL",
+        message: `Catalog image URL for SKU ${trimSku(row.sku)} is marked broken.`,
         rawData: JSON.stringify(row)
       }
     });
@@ -254,6 +325,7 @@ export async function importParsedOrderRows(input: {
 
   for (const row of plan.created) {
     const sku = trimSku(row.sku);
+    const catalog = catalogBySku.get(sku);
     await prisma.order.create({
       data: {
         accountId: input.account.id,
@@ -269,13 +341,14 @@ export async function importParsedOrderRows(input: {
         paymentType: row.paymentType ?? "UNKNOWN",
         city: trimValue(row.city) || null,
         state: trimValue(row.state) || null,
-        imageUrl: mappingBySku.get(sku)?.imageUrl ?? null
+        imageUrl: mappingBySku.get(sku)?.imageUrl ?? catalog?.imageUrl ?? null
       }
     });
   }
 
   for (const row of plan.updated) {
     const sku = trimSku(row.sku);
+    const catalog = catalogBySku.get(sku);
     await prisma.order.updateMany({
       where: {
         accountId: input.account.id,
@@ -291,7 +364,7 @@ export async function importParsedOrderRows(input: {
         orderNo: trimValue(row.orderNo) || trimValue(row.awb),
         productDescription: trimValue(row.productDescription) || null,
         paymentType: row.paymentType ?? "UNKNOWN",
-        imageUrl: mappingBySku.get(sku)?.imageUrl ?? null
+        imageUrl: mappingBySku.get(sku)?.imageUrl ?? catalog?.imageUrl ?? null
       }
     });
   }
@@ -326,8 +399,10 @@ export async function importParsedOrderRows(input: {
     duplicateRows: plan.duplicates.length,
     missingImageRows: plan.missingImageRows.length,
     skippedRows: plan.duplicates.length + (input.heldRows ?? 0),
-    errorRows: plan.errors.length,
-    metadataAutoFilled: metadataAutoFillUpdates.length
+    errorRows: plan.errors.length + plan.missingCatalogRows.length + plan.brokenImageRows.length,
+    metadataAutoFilled: metadataAutoFillUpdates.length,
+    missingCatalogRows: plan.missingCatalogRows.length,
+    brokenImageRows: plan.brokenImageRows.length
   };
   const updatedBatch = input.batchId
     ? await prisma.uploadBatch.update({
@@ -339,7 +414,7 @@ export async function importParsedOrderRows(input: {
           duplicateRows: plan.duplicates.length,
           missingImageRows: plan.missingImageRows.length,
           skippedRows: importStats.skippedRows,
-          errorRows: plan.errors.length,
+          errorRows: plan.errors.length + plan.missingCatalogRows.length + plan.brokenImageRows.length,
           notes: withImportStats(batch.notes, importStats)
         }
       })
@@ -352,7 +427,7 @@ export async function importParsedOrderRows(input: {
           duplicateRows: plan.duplicates.length,
           missingImageRows: plan.missingImageRows.length,
           skippedRows: plan.duplicates.length,
-          errorRows: plan.errors.length,
+          errorRows: plan.errors.length + plan.missingCatalogRows.length + plan.brokenImageRows.length,
           notes: withImportStats(batch.notes, importStats)
         }
       });
@@ -370,10 +445,14 @@ export async function importParsedOrderRows(input: {
       duplicateRows: plan.duplicates.length,
       missingImageRows: plan.missingImageRows.length,
       errorRows: plan.errors.length,
-      metadataAutoFilled: metadataAutoFillUpdates.length
+      metadataAutoFilled: metadataAutoFillUpdates.length,
+      missingCatalogRows: plan.missingCatalogRows.length,
+      brokenImageRows: plan.brokenImageRows.length
     },
     request: input.request
   });
+
+  await markActiveSkusFromOrders(rows, { catalogIndex });
 
   return updatedBatch;
 }

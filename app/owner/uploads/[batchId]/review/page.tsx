@@ -167,6 +167,10 @@ function issueTone(issueType: string) {
     return "bg-amber-50 text-amber-800 ring-amber-200";
   }
 
+  if (issueType.includes("CATALOG")) {
+    return "bg-rose-50 text-rose-700 ring-rose-200";
+  }
+
   if (issueType.includes("IMAGE")) {
     return "bg-blue-50 text-blue-700 ring-blue-200";
   }
@@ -353,8 +357,8 @@ export default async function ParseReviewPage({ params, searchParams }: ReviewPa
     <AppShell>
       <PageHeader
         eyebrow="Review"
-        title="PDF parse review"
-        description="Check parsed rows, missing fields, image mappings, and duplicate warnings before confirming import."
+        title="Order file parse review"
+        description="Check parsed rows, catalog matches, image mappings, and duplicate warnings before confirming import."
       >
         <StatusBadge value={batch.status} />
       </PageHeader>

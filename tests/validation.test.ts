@@ -172,7 +172,8 @@ assert.equal(findAwbSearchMatches({ candidates: awbCandidates, accountId: "a2", 
 assert.equal(findAwbSearchMatches({ candidates: awbCandidates, accountId: "a1", query: "15493" }).length, 10, "AWB search limits multiple matches");
 assert.equal(findAwbSearchMatches({ candidates: awbCandidates, accountId: "a1", query: "00000" }).length, 0, "AWB search returns no results cleanly");
 assert.equal(uploadBatchSchema.safeParse({ filename: "labels.pdf" }).success, true, "PDF upload should validate");
-assert.equal(uploadBatchSchema.safeParse({ filename: "labels.xlsx" }).success, false, "non-PDF upload should fail");
+assert.equal(uploadBatchSchema.safeParse({ filename: "manifest.xlsx" }).success, true, "Manifest Excel upload should validate");
+assert.equal(uploadBatchSchema.safeParse({ filename: "manifest.csv" }).success, true, "Copied manifest CSV upload should validate");
 assert.equal(
   skuImageMappingSchema.safeParse({
     sku: sampleOrder.sku,
@@ -995,12 +996,12 @@ assert.match(pickerPage, /Compact/, "Picker page supports compact mode");
 assert.match(pickerPage, /sticky top-\[88px\]/, "Picker filters stay reachable on mobile");
 assert.match(pickerPage, /cacheStatus={group.mapping\?\.cacheStatus}/, "Picker card passes cache status to image component");
 assert.match(pickerDetailPage, /fixed inset-x-0 bottom-0/, "Picker detail has mobile sticky bottom actions");
-assert.match(pickerDetailPage, /mapping\?\.cachedImageUrl/, "Picker detail uses cached image URL first");
+assert.match(pickerDetailPage, /detail\.imageUrl/, "Picker detail uses shared catalog-aware image URL");
 assert.match(packingPage, /<AwbBarcodeScanner[\s\S]*Packed today/, "Packing page places the scanner before lower-priority dashboard details");
 assert.doesNotMatch(packingPage, /recentScans/, "Packing page does not wait on recent scan logs before showing scanner");
 assert.match(packingResultPage, /Quantity to pack/, "Packing result makes quantity prominent on mobile");
 assert.match(packingResultPage, /fixed inset-x-0 bottom-0/, "Packing result has mobile sticky confirm actions");
-assert.match(packingResultPage, /mapping\?\.cachedImageUrl/, "Packing card uses cached image URL first");
+assert.match(packingResultPage, /result\.imageUrl/, "Packing card uses shared catalog-aware image URL");
 assert.match(reviewPage, /<details[\s\S]*Picklist SKU summary rows/, "Upload review makes picklist summary rows collapsible");
 assert.match(reviewPage, /Prepare today&apos;s product images/, "Upload review exposes daily image cache preparation");
 assert.match(reviewPage, /Missing image mappings/, "Upload review shows inline missing image mapping repair");

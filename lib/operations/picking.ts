@@ -1,4 +1,5 @@
 import type { PackStatus, PickStatus } from "@prisma/client";
+import type { CatalogOrderDetails } from "@/lib/catalog/order-enrichment";
 import { normalizeSkuForMatching } from "@/lib/sku";
 
 export type PickerOrderInput = {
@@ -42,6 +43,7 @@ export type PickerSkuGroup = {
   productName: string | null;
   imageUrl: string | null;
   mapping: PickerMappingInput | null;
+  catalog: CatalogOrderDetails | null;
 };
 
 export const DEFAULT_PICKER_GROUP_LIMIT = 24;
@@ -73,8 +75,9 @@ export function pickerDetailPath(sku: string, color: string | null | undefined, 
   return `/picker/${encodeURIComponent(sku)}?color=${encodePickerDimension(color)}&size=${encodePickerDimension(size)}`;
 }
 
-export function buildPickerSkuGroups(orders: PickerOrderInput[], mappings: PickerMappingInput[]) {
+export function buildPickerSkuGroups(orders: PickerOrderInput[], mappings: PickerMappingInput[], catalogDetails: CatalogOrderDetails[] = []) {
   const mappingBySku = new Map(mappings.map((mapping) => [normalizeSkuForMatching(mapping.sku), mapping]));
+  const catalogBySku = new Map(catalogDetails.map((detail) => [normalizeSkuForMatching(detail.sku), detail]));
   const groups = new Map<string, PickerSkuGroup>();
 
   for (const order of orders) {
@@ -82,7 +85,8 @@ export function buildPickerSkuGroups(orders: PickerOrderInput[], mappings: Picke
     const size = cleanDimension(order.size);
     const key = pickerGroupKey(order.sku, color, size);
     const mapping = mappingBySku.get(normalizeSkuForMatching(order.sku)) ?? null;
-    const imageUrl = mapping?.cachedImageUrl ?? null;
+    const catalog = catalogBySku.get(normalizeSkuForMatching(order.sku)) ?? null;
+    const imageUrl = mapping?.cachedImageUrl ?? catalog?.imageUrl ?? null;
     const existing =
       groups.get(key) ??
       ({
@@ -95,10 +99,11 @@ export function buildPickerSkuGroups(orders: PickerOrderInput[], mappings: Picke
         pendingCount: 0,
         problemCount: 0,
         status: "READY",
-        missingImage: !imageUrl,
-        productName: mapping?.productName ?? order.productDescription ?? null,
+        missingImage: !imageUrl || Boolean(catalog?.brokenImage),
+        productName: mapping?.productName ?? order.productDescription ?? catalog?.title ?? null,
         imageUrl,
-        mapping
+        mapping,
+        catalog
       } satisfies PickerSkuGroup);
 
     existing.totalQuantity += order.qty;
@@ -112,12 +117,13 @@ export function buildPickerSkuGroups(orders: PickerOrderInput[], mappings: Picke
       existing.pendingCount += 1;
     }
 
-    if (mapping?.cachedImageUrl && existing.imageUrl !== mapping.cachedImageUrl) {
-      existing.imageUrl = mapping.cachedImageUrl;
+    if (imageUrl && existing.imageUrl !== imageUrl) {
+      existing.imageUrl = imageUrl;
       existing.mapping = mapping;
+      existing.catalog = catalog;
     }
 
-    existing.missingImage = existing.missingImage && !imageUrl;
+    existing.missingImage = existing.missingImage && (!imageUrl || Boolean(catalog?.brokenImage));
     groups.set(key, existing);
   }
 
@@ -141,7 +147,8 @@ export function filterPickerSkuGroups(
 
       return (
         group.sku.toLowerCase().includes(query) ||
-        (group.productName?.toLowerCase().includes(query) ?? false)
+        (group.productName?.toLowerCase().includes(query) ?? false) ||
+        (group.catalog?.title?.toLowerCase().includes(query) ?? false)
       );
     })
     .filter((group) => {

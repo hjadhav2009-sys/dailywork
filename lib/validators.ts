@@ -28,8 +28,11 @@ export const uploadBatchSchema = z.object({
   filename: z
     .string()
     .trim()
-    .min(1, "Choose a PDF file")
-    .refine((value) => value.toLowerCase().endsWith(".pdf"), "Only PDF uploads are supported")
+    .min(1, "Choose an order file")
+    .refine(
+      (value) => [".pdf", ".csv", ".xlsx"].some((extension) => value.toLowerCase().endsWith(extension)),
+      "Upload a PDF, CSV, or .xlsx Excel file"
+    )
 });
 
 export const skuImageMappingSchema = z.object({

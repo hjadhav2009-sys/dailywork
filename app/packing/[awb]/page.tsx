@@ -35,10 +35,12 @@ export default async function ScanResultPage({ params, searchParams }: ScanResul
   }
 
   const { order, mapping } = result;
+  const catalog = result.catalog;
   const canPack = order.packStatus === "READY";
   const canReportProblem = order.packStatus === "READY";
   const openProblem = order.problemOrders[0];
-  const imageUrl = mapping?.cachedImageUrl ?? null;
+  const imageUrl = result.imageUrl ?? null;
+  const displayTitle = mapping?.productName ?? order.productDescription ?? catalog.title ?? "Product details not mapped";
   const canCacheImage = user.role === "OWNER" && mapping?.id && mapping.imageUrl && mapping.cacheStatus !== "CACHED";
 
   return (
@@ -50,6 +52,8 @@ export default async function ScanResultPage({ params, searchParams }: ScanResul
       >
         <div className="flex flex-wrap gap-2">
           <StatusBadge value={order.packStatus} />
+          {catalog.missingCatalog ? <StatusBadge value="MISSING_CATALOG" /> : null}
+          {catalog.brokenImage ? <StatusBadge value="BROKEN_IMAGE" /> : null}
           <Link
             href="/packing"
             className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-berry hover:text-berry"
@@ -83,17 +87,17 @@ export default async function ScanResultPage({ params, searchParams }: ScanResul
         <div className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
           <ProductImage
             src={imageUrl}
-            alt={`${mapping?.productName ?? order.productDescription ?? "Product"} ${order.sku}`}
+            alt={`${displayTitle} ${order.sku}`}
             size="lg"
             mappingId={mapping?.id}
             showDebug={user.role === "OWNER"}
             imageHealth={mapping?.imageHealth}
             cacheStatus={mapping?.cacheStatus}
-            originalImageUrl={mapping?.imageUrl}
+            originalImageUrl={mapping?.imageUrl ?? catalog.imageUrl}
           />
           <div className="p-4">
             <p className="line-clamp-2 text-base font-semibold text-slate-700">
-              {mapping?.productName ?? order.productDescription ?? "Product details not mapped"}
+              {displayTitle}
             </p>
             {!imageUrl && user.role !== "OWNER" ? (
               <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">Image not prepared.</p>
@@ -133,11 +137,11 @@ export default async function ScanResultPage({ params, searchParams }: ScanResul
               </div>
               <div className="rounded-md bg-slate-50 p-3">
                 <dt className="text-sm font-medium text-slate-500">Color</dt>
-                <dd className="mt-1 font-semibold text-slate-950">{order.color ?? mapping?.color ?? "Unknown"}</dd>
+                <dd className="mt-1 font-semibold text-slate-950">{order.color ?? mapping?.color ?? catalog.color ?? "Unknown"}</dd>
               </div>
               <div className="rounded-md bg-slate-50 p-3">
                 <dt className="text-sm font-medium text-slate-500">Size</dt>
-                <dd className="mt-1 font-semibold text-slate-950">{order.size ?? "Unknown"}</dd>
+                <dd className="mt-1 font-semibold text-slate-950">{order.size ?? mapping?.size ?? catalog.size ?? "Unknown"}</dd>
               </div>
               <div className="rounded-md bg-slate-50 p-3">
                 <dt className="text-sm font-medium text-slate-500">Courier</dt>
@@ -166,6 +170,34 @@ export default async function ScanResultPage({ params, searchParams }: ScanResul
                 </dd>
               </div>
             </dl>
+            {catalog.productHighlights.length > 0 || catalog.additionalDetails.length > 0 ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {catalog.productHighlights.length > 0 ? (
+                  <div className="rounded-md bg-slate-50 p-3">
+                    <h3 className="text-sm font-bold text-slate-950">Product Highlights</h3>
+                    <div className="mt-2 grid gap-1 text-sm text-slate-700">
+                      {catalog.productHighlights.slice(0, 6).map((attribute) => (
+                        <p key={`${attribute.attributeName}-${attribute.attributeValue}`}>
+                          <span className="font-semibold">{attribute.attributeName}:</span> {attribute.attributeValue}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {catalog.additionalDetails.length > 0 ? (
+                  <div className="rounded-md bg-slate-50 p-3">
+                    <h3 className="text-sm font-bold text-slate-950">Additional Details</h3>
+                    <div className="mt-2 grid gap-1 text-sm text-slate-700">
+                      {catalog.additionalDetails.slice(0, 8).map((attribute) => (
+                        <p key={`${attribute.attributeName}-${attribute.attributeValue}`}>
+                          <span className="font-semibold">{attribute.attributeName}:</span> {attribute.attributeValue}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-5 md:grid-cols-2">

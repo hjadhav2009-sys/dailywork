@@ -1,4 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
+import { activeSkuRecords, loadActiveSkuState } from "@/lib/catalog/active-skus";
+import { loadCatalogIndex } from "@/lib/catalog/master";
+import { buildCatalogDetailsMap } from "@/lib/catalog/order-enrichment";
 import { csvResponse, rowsToCsv, type CsvValue } from "@/lib/csv";
 import { prisma } from "@/lib/prisma";
 import type { BatchStatus, PackStatus, ProblemStatus, ScanOutcome } from "@prisma/client";
@@ -10,7 +13,13 @@ const exportKinds = new Set([
   "problem-orders",
   "scan-logs",
   "sku-mappings",
-  "upload-batches"
+  "upload-batches",
+  "today-picking-list",
+  "today-packing-list",
+  "missing-catalog-skus",
+  "broken-image-urls",
+  "duplicate-awbs-skipped",
+  "active-skus"
 ]);
 
 function parseDate(value: string | null, endOfDay = false) {
@@ -93,6 +102,30 @@ export async function GET(request: Request, context: { params: Promise<{ kind: s
 }
 
 async function buildExport(kind: string, searchParams: URLSearchParams) {
+  if (kind === "today-picking-list") {
+    return todayPickingListCsv(searchParams);
+  }
+
+  if (kind === "today-packing-list") {
+    return todayPackingListCsv(searchParams);
+  }
+
+  if (kind === "missing-catalog-skus") {
+    return missingCatalogSkusCsv();
+  }
+
+  if (kind === "broken-image-urls") {
+    return brokenImageUrlsCsv();
+  }
+
+  if (kind === "duplicate-awbs-skipped") {
+    return duplicateAwbsSkippedCsv(searchParams);
+  }
+
+  if (kind === "active-skus") {
+    return activeSkusCsv();
+  }
+
   if (kind === "scan-logs") {
     return scanLogsCsv(searchParams);
   }
@@ -110,6 +143,157 @@ async function buildExport(kind: string, searchParams: URLSearchParams) {
   }
 
   return ordersCsv(kind, searchParams);
+}
+
+function todayStart() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+async function todayPickingListCsv(searchParams: URLSearchParams) {
+  const rows = await prisma.order.findMany({
+    where: {
+      accountId: accountFilter(searchParams),
+      importedAt: { gte: todayStart() },
+      packStatus: "READY"
+    },
+    orderBy: [{ sku: "asc" }, { color: "asc" }, { size: "asc" }]
+  });
+  const catalogIndex = await loadCatalogIndex();
+  const catalogBySku = buildCatalogDetailsMap(catalogIndex, rows.map((row) => row.sku));
+  const grouped = new Map<string, { sku: string; color: string | null; size: string | null; qty: number; awbs: Set<string> }>();
+
+  for (const row of rows) {
+    const key = `${row.sku}::${row.color ?? ""}::${row.size ?? ""}`;
+    const existing = grouped.get(key) ?? { sku: row.sku, color: row.color, size: row.size, qty: 0, awbs: new Set<string>() };
+    existing.qty += row.qty;
+    existing.awbs.add(row.awb);
+    grouped.set(key, existing);
+  }
+
+  return rowsToCsv(
+    ["sku", "title", "color", "size", "total_qty", "awb_count", "image_url", "missing_catalog", "image_status"],
+    Array.from(grouped.values()).map((group) => {
+      const catalog = catalogBySku.get(group.sku);
+      const imageStatus = catalog?.brokenImage ? "broken" : catalog?.missingImage ? "missing" : catalog?.imageUrl ? "available" : "unknown";
+
+      return [
+        group.sku,
+        catalog?.title,
+        group.color ?? catalog?.color,
+        group.size ?? catalog?.size,
+        group.qty,
+        group.awbs.size,
+        catalog?.imageUrl,
+        catalog?.missingCatalog ?? false,
+        imageStatus
+      ];
+    })
+  );
+}
+
+async function todayPackingListCsv(searchParams: URLSearchParams) {
+  const rows = await prisma.order.findMany({
+    where: {
+      accountId: accountFilter(searchParams),
+      importedAt: { gte: todayStart() }
+    },
+    include: { account: true },
+    orderBy: [{ awb: "asc" }]
+  });
+
+  return rowsToCsv(
+    ["account", "awb", "orderNo", "sku", "qty", "color", "size", "courier", "packStatus", "productDescription", "imageUrl"],
+    rows.map((order) => [
+      order.account.name,
+      order.awb,
+      order.orderNo,
+      order.sku,
+      order.qty,
+      order.color,
+      order.size,
+      order.courier,
+      order.packStatus,
+      order.productDescription,
+      order.imageUrl
+    ])
+  );
+}
+
+async function activeSkusCsv() {
+  const state = await loadActiveSkuState();
+
+  return rowsToCsv(
+    ["sku", "active", "first_seen_at", "last_seen_at", "active_until", "quantity_window", "order_count_window", "title", "product_url", "image_url", "missing_catalog", "missing_image", "broken_image"],
+    activeSkuRecords(state).map((record) => [
+      record.sku,
+      record.active,
+      record.firstSeenAt,
+      record.lastSeenAt,
+      record.activeUntil,
+      record.quantityWindow,
+      record.orderCountWindow,
+      record.title,
+      record.productUrl,
+      record.imageUrl,
+      record.missingCatalog,
+      record.missingImage,
+      record.brokenImage
+    ])
+  );
+}
+
+async function missingCatalogSkusCsv() {
+  const state = await loadActiveSkuState();
+
+  return rowsToCsv(
+    ["sku", "last_seen_at", "active_until", "quantity_window", "order_count_window"],
+    activeSkuRecords(state)
+      .filter((record) => record.missingCatalog)
+      .map((record) => [record.sku, record.lastSeenAt, record.activeUntil, record.quantityWindow, record.orderCountWindow])
+  );
+}
+
+async function brokenImageUrlsCsv() {
+  const state = await loadActiveSkuState();
+
+  return rowsToCsv(
+    ["sku", "title", "image_url", "status", "last_seen_at", "product_url"],
+    activeSkuRecords(state)
+      .filter((record) => record.brokenImage || record.missingImage)
+      .map((record) => [
+        record.sku,
+        record.title,
+        record.imageUrl,
+        record.brokenImage ? "broken" : "missing",
+        record.lastSeenAt,
+        record.productUrl
+      ])
+  );
+}
+
+async function duplicateAwbsSkippedCsv(searchParams: URLSearchParams) {
+  const rows = await prisma.importRowIssue.findMany({
+    where: {
+      issueType: "DUPLICATE_SKIPPED",
+      createdAt: dateRange(searchParams) ?? { gte: todayStart() },
+      batch: {
+        accountId: accountFilter(searchParams)
+      }
+    },
+    include: {
+      batch: {
+        include: { account: true }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  return rowsToCsv(
+    ["account", "batch", "rowNumber", "message", "rawData", "createdAt"],
+    rows.map((issue) => [issue.batch.account.name, issue.batch.fileName, issue.rowNumber, issue.message, issue.rawData, issue.createdAt])
+  );
 }
 
 async function ordersCsv(kind: string, searchParams: URLSearchParams) {

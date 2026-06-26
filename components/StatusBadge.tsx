@@ -8,6 +8,8 @@ const statusTone: Record<string, string> = {
   PROBLEM: "bg-amber-50/90 text-amber-950 ring-amber-200/90",
   NOT_FOUND: "bg-rose-50/90 text-rose-900 ring-rose-200/90",
   MISSING_IMAGE: "bg-amber-50/90 text-amber-950 ring-amber-200/90",
+  MISSING_CATALOG: "bg-rose-50/90 text-rose-900 ring-rose-200/90",
+  BROKEN_IMAGE: "bg-rose-50/90 text-rose-900 ring-rose-200/90",
   OK: "bg-emerald-50/90 text-emerald-900 ring-emerald-200/90",
   WARNING: "bg-amber-50/90 text-amber-950 ring-amber-200/90",
   NEEDS_ACTION: "bg-rose-50/90 text-rose-900 ring-rose-200/90",

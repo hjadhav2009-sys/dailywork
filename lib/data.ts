@@ -1,4 +1,7 @@
 import type { Account } from "@prisma/client";
+import { activeSkuSummary, loadActiveSkuState } from "./catalog/active-skus";
+import { loadCatalogIndex } from "./catalog/master";
+import { buildCatalogDetailsMap, catalogDetailsForSku } from "./catalog/order-enrichment";
 import { cachedProductImageUrl } from "./image-cache";
 import { findAwbSearchMatches } from "./operations/awb-search";
 import { buildPickerSkuGroups, decodePickerDimension, filterPickerSkuGroups, paginatePickerSkuGroups } from "./operations/picking";
@@ -9,20 +12,71 @@ import { normalizeSkuMappingImageFilter } from "./product-image";
 import { normalizeSkuForMatching } from "./sku";
 
 export async function getDashboardStats(accountId: string) {
-  const [readyOrders, packedOrders, problemOrders, skuMappings, batches] = await Promise.all([
+  const startOfDay = startOfWorkDay();
+  const [
+    readyOrders,
+    packedOrders,
+    problemOrders,
+    skuMappings,
+    batches,
+    todaySkuRows,
+    todayQty,
+    duplicateAwbsSkippedToday,
+    readyPickingOrders,
+    readyPackingOrders,
+    activeState
+  ] = await Promise.all([
     prisma.order.count({ where: { accountId, packStatus: "READY" } }),
     prisma.order.count({ where: { accountId, packStatus: "PACKED" } }),
     prisma.problemOrder.count({ where: { accountId, status: "OPEN" } }),
     prisma.skuImageMapping.count({ where: { accountId } }),
-    prisma.uploadBatch.count({ where: { accountId } })
+    prisma.uploadBatch.count({ where: { accountId } }),
+    prisma.order.groupBy({
+      by: ["sku"],
+      where: {
+        accountId,
+        importedAt: {
+          gte: startOfDay
+        }
+      }
+    }),
+    prisma.order.aggregate({
+      where: {
+        accountId,
+        importedAt: {
+          gte: startOfDay
+        }
+      },
+      _sum: { qty: true }
+    }),
+    prisma.importRowIssue.count({
+      where: {
+        issueType: "DUPLICATE_SKIPPED",
+        batch: { accountId },
+        createdAt: { gte: startOfDay }
+      }
+    }),
+    prisma.order.count({ where: { accountId, pickStatus: "READY", packStatus: "READY" } }),
+    prisma.order.count({ where: { accountId, packStatus: "READY" } }),
+    loadActiveSkuState()
   ]);
+  const activeSummary = activeSkuSummary(activeState);
 
   return {
     readyOrders,
     packedOrders,
     problemOrders,
     skuMappings,
-    batches
+    batches,
+    todaySkus: todaySkuRows.length,
+    todayTotalQty: todayQty._sum.qty ?? 0,
+    missingCatalogSkus: activeSummary.missingCatalogCount,
+    brokenOrMissingImageSkus: activeSummary.missingImageCount + activeSummary.brokenImageCount,
+    activeLoopSkus: activeSummary.activeCount,
+    activeLoopRetentionDays: activeSummary.retentionDays,
+    duplicateAwbsSkippedToday,
+    readyPickingOrders,
+    readyPackingOrders
   };
 }
 
@@ -166,6 +220,8 @@ export async function getSkuGroups(
     }),
     800
   );
+  const catalogIndex = await loadCatalogIndex();
+  const catalogDetails = Array.from(buildCatalogDetailsMap(catalogIndex, orderSkus).values());
 
   return paginatePickerSkuGroups(
     filterPickerSkuGroups(
@@ -174,7 +230,8 @@ export async function getSkuGroups(
         mappings.map((mapping) => ({
           ...mapping,
           cachedImageUrl: cachedProductImageUrl(mapping)
-        }))
+        })),
+        catalogDetails
       ),
       options
     ),
@@ -190,7 +247,7 @@ export async function getSkuDetail(
   const color = decodePickerDimension(options.color);
   const size = decodePickerDimension(options.size);
   const normalizedSku = normalizeSkuForMatching(sku);
-  const [orders, mapping] = await Promise.all([
+  const [orders, mapping, catalogIndex] = await Promise.all([
     prisma.order.findMany({
       where: {
         accountId,
@@ -237,8 +294,10 @@ export async function getSkuDetail(
         cacheCachedAt: true
       },
       orderBy: { updatedAt: "desc" }
-    })
+    }),
+    loadCatalogIndex()
   ]);
+  const catalog = catalogDetailsForSku(catalogIndex, sku);
 
   const courierCounts = orders.reduce<Record<string, number>>((counts, order) => {
     const courier = order.courier ?? "Unknown";
@@ -254,6 +313,8 @@ export async function getSkuDetail(
           cachedImageUrl: cachedProductImageUrl(mapping)
         }
       : null,
+    catalog,
+    imageUrl: (mapping ? cachedProductImageUrl(mapping) : null) ?? catalog.imageUrl,
     totalQuantity: orders.reduce((sum, order) => sum + order.qty, 0),
     pickedCount: orders.filter((order) => order.pickStatus === "PICKED").length,
     pendingCount: orders.filter((order) => order.pickStatus === "READY").length,
@@ -384,9 +445,9 @@ export async function searchOrdersByAwbFragment(accountId: string, query: string
       limit
     });
     const matchSkus = Array.from(new Set(matches.flatMap((order) => [order.sku, normalizeSkuForMatching(order.sku)].filter(Boolean))));
-    const mappings =
+    const [mappings, catalogIndex] = await Promise.all([
       matchSkus.length > 0
-        ? await prisma.skuImageMapping.findMany({
+        ? prisma.skuImageMapping.findMany({
             where: {
               accountId,
               sku: { in: matchSkus },
@@ -402,13 +463,16 @@ export async function searchOrdersByAwbFragment(accountId: string, query: string
               cacheCachedAt: true
             }
           })
-        : [];
+        : Promise.resolve([]),
+      loadCatalogIndex()
+    ]);
+    const catalogBySku = buildCatalogDetailsMap(catalogIndex, matchSkus);
     const imageBySku = new Map(mappings.map((mapping) => [normalizeSkuForMatching(mapping.sku), cachedProductImageUrl(mapping)]));
     const cacheStatusBySku = new Map(mappings.map((mapping) => [normalizeSkuForMatching(mapping.sku), mapping.cacheStatus]));
 
     return matches.map((order) => ({
       ...order,
-      cachedImageUrl: imageBySku.get(normalizeSkuForMatching(order.sku)) ?? null,
+      cachedImageUrl: imageBySku.get(normalizeSkuForMatching(order.sku)) ?? catalogBySku.get(normalizeSkuForMatching(order.sku))?.imageUrl ?? null,
       cacheStatus: cacheStatusBySku.get(normalizeSkuForMatching(order.sku)) ?? null
     }));
   }, 500);
@@ -477,7 +541,8 @@ export async function getOrderWithImage(accountId: string, awb: string) {
     return null;
   }
 
-  const mapping = await prisma.skuImageMapping.findFirst({
+  const [mapping, catalogIndex] = await Promise.all([
+    prisma.skuImageMapping.findFirst({
     where: {
       accountId,
       active: true,
@@ -498,7 +563,10 @@ export async function getOrderWithImage(accountId: string, awb: string) {
       cacheCachedAt: true
     },
     orderBy: { updatedAt: "desc" }
-  });
+    }),
+    loadCatalogIndex()
+  ]);
+  const catalog = catalogDetailsForSku(catalogIndex, order.sku);
 
   return {
     order,
@@ -507,7 +575,9 @@ export async function getOrderWithImage(accountId: string, awb: string) {
           ...mapping,
           cachedImageUrl: cachedProductImageUrl(mapping)
         }
-      : null
+      : null,
+    catalog,
+    imageUrl: (mapping ? cachedProductImageUrl(mapping) : null) ?? catalog.imageUrl
   };
 }
 
@@ -524,7 +594,7 @@ export async function getProblemOrders(accountId: string) {
 
 export async function getReportSummary(accountId: string) {
   const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
-  const [ordersByStatus, scansToday, batches, duplicateIssuesToday, missingImageMappings, brokenImageMappings, auditLogs] = await Promise.all([
+  const [ordersByStatus, scansToday, batches, duplicateIssuesToday, missingImageMappings, brokenImageMappings, auditLogs, activeState] = await Promise.all([
     prisma.order.groupBy({
       by: ["packStatus"],
       where: { accountId },
@@ -582,8 +652,10 @@ export async function getReportSummary(accountId: string) {
       include: { user: true },
       orderBy: { createdAt: "desc" },
       take: 12
-    })
+    }),
+    loadActiveSkuState()
   ]);
+  const activeSummary = activeSkuSummary(activeState);
 
   return {
     ordersByStatus,
@@ -592,6 +664,9 @@ export async function getReportSummary(accountId: string) {
     duplicateIssuesToday,
     missingImageMappings,
     brokenImageMappings,
-    auditLogs
+    auditLogs,
+    activeSummary,
+    missingCatalogSkus: activeSummary.active.filter((record) => record.missingCatalog).slice(0, 50),
+    brokenCatalogImages: activeSummary.active.filter((record) => record.brokenImage || record.missingImage).slice(0, 50)
   };
 }

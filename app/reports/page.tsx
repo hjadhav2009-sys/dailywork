@@ -5,6 +5,16 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { requireAccount, requireUser } from "@/lib/auth";
 import { getReportSummary } from "@/lib/data";
 import { compactNumber, formatDateTime, titleCase } from "@/lib/format";
+import { refreshSelectedSkuAction } from "@/app/owner/catalog/sync/actions";
+
+const exportLinks = [
+  { href: "/owner/exports/today-picking-list", label: "Today picking list by SKU" },
+  { href: "/owner/exports/today-packing-list", label: "Today packing list by AWB" },
+  { href: "/owner/exports/missing-catalog-skus", label: "Missing catalog SKU report" },
+  { href: "/owner/exports/broken-image-urls", label: "Broken image URL report" },
+  { href: "/owner/exports/duplicate-awbs-skipped", label: "Duplicate AWB skipped report" },
+  { href: "/owner/exports/active-skus", label: "Active SKU loop report" }
+];
 
 export default async function ReportsPage() {
   const user = await requireUser(["OWNER"]);
@@ -28,6 +38,20 @@ export default async function ReportsPage() {
         <StatCard label="Duplicates skipped today" value={compactNumber(summary.duplicateIssuesToday)} tone="clay" />
         <StatCard label="Missing image SKUs" value={compactNumber(summary.missingImageMappings.length)} />
         <StatCard label="Broken image URLs" value={compactNumber(summary.brokenImageMappings.length)} />
+        <StatCard label={`Active ${summary.activeSummary.retentionDays}-day SKUs`} value={compactNumber(summary.activeSummary.activeCount)} tone="berry" />
+        <StatCard label="Missing catalog SKUs" value={compactNumber(summary.activeSummary.missingCatalogCount)} tone="clay" />
+        <StatCard label="Active image issues" value={compactNumber(summary.activeSummary.missingImageCount + summary.activeSummary.brokenImageCount)} tone="clay" />
+      </section>
+
+      <section className="mt-8 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+        <h2 className="font-semibold text-slate-950">Phase 4 exports</h2>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {exportLinks.map((link) => (
+            <a key={link.href} href={link.href} className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 transition hover:border-berry hover:text-berry">
+              {link.label}
+            </a>
+          ))}
+        </div>
       </section>
 
       <section className="mt-8 rounded-md border border-slate-200 bg-white shadow-sm">
@@ -78,6 +102,57 @@ export default async function ReportsPage() {
       </section>
 
       <section className="mt-8 grid gap-6 lg:grid-cols-2">
+        <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <h2 className="font-semibold text-slate-950">Missing catalog SKUs</h2>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {summary.missingCatalogSkus.map((record) => (
+              <div key={record.sku} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center">
+                <div>
+                  <p className="font-semibold text-slate-950">{record.sku}</p>
+                  <p className="text-slate-600">Qty {record.quantityWindow} - Orders {record.orderCountWindow}</p>
+                </div>
+                <form action={refreshSelectedSkuAction}>
+                  <input type="hidden" name="selectedSku" value={record.sku} />
+                  <button className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800">
+                    Queue refresh
+                  </button>
+                </form>
+              </div>
+            ))}
+            {summary.missingCatalogSkus.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-slate-500">No active missing catalog SKUs.</div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <h2 className="font-semibold text-slate-950">Active broken or missing images</h2>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {summary.brokenCatalogImages.map((record) => (
+              <div key={record.sku} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-950">{record.sku}</p>
+                  <p className="truncate text-slate-600">{record.title ?? "Catalog title missing"}</p>
+                  <p className="break-all text-xs text-rose-700">{record.imageUrl ?? "No image URL"}</p>
+                </div>
+                <form action={refreshSelectedSkuAction}>
+                  <input type="hidden" name="selectedSku" value={record.sku} />
+                  <button className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800">
+                    Queue refresh
+                  </button>
+                </form>
+              </div>
+            ))}
+            {summary.brokenCatalogImages.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-slate-500">No active broken catalog image URLs.</div>
+            ) : null}
+          </div>
+        </div>
+
         <div className="rounded-md border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-4 py-3">
             <h2 className="font-semibold text-slate-950">Missing image SKUs</h2>
